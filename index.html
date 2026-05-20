@@ -1,0 +1,963 @@
+<html lang="en"><head>
+<!-- Playables SDK -->
+<script>// Playables SDK v1.0.0
+// Game lifecycle bridge: rAF-based game-ready detection + event communication
+(function() {
+  'use strict';
+
+  // Idempotency: skip if already initialized (e.g., server-side injection
+  // followed by client-side inject-javascript via the Bloks webview component).
+  if (window.playablesSDK) return;
+
+  var HANDLER_NAME = 'playablesGameEventHandler';
+  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
+  var RAF_FRAME_THRESHOLD = 3;
+
+  var gameReadySent = false;
+  var firstInteractionSent = false;
+  var errorSent = false;
+  var frameCount = 0;
+  var originalRAF = window.requestAnimationFrame;
+
+  // --- Transport Layer ---
+
+  function hasIOSBridge() {
+    return !!(window.webkit &&
+              window.webkit.messageHandlers &&
+              window.webkit.messageHandlers[HANDLER_NAME]);
+  }
+
+  function hasAndroidBridge() {
+    return !!(window[ANDROID_BRIDGE_NAME] &&
+              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
+  }
+
+  function isInIframe() {
+    return !!(window.parent && window.parent !== window);
+  }
+
+  function sendEvent(eventName, payload) {
+    var message = {
+      type: eventName,
+      payload: payload || {},
+      timestamp: Date.now()
+    };
+
+    if (hasIOSBridge()) {
+      try {
+        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    if (hasAndroidBridge()) {
+    try {
+      var p = payload || {};
+      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
+      p.timestamp = message.timestamp;
+      window[ANDROID_BRIDGE_NAME].postEvent(
+        eventName,
+        JSON.stringify(p)
+      );
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+    if (isInIframe()) {
+      try {
+        window.parent.postMessage(message, '*');
+      } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+
+  // --- rAF Game-Ready Detection ---
+
+  function onFrame() {
+    if (gameReadySent) return;
+
+    frameCount++;
+    if (frameCount >= RAF_FRAME_THRESHOLD) {
+      gameReadySent = true;
+      sendEvent('game_ready', {
+        frame_count: frameCount,
+        detected_at: Date.now()
+      });
+      return;
+    }
+
+    originalRAF.call(window, onFrame);
+  }
+
+  if (originalRAF) {
+    window.requestAnimationFrame = function(callback) {
+      if (!gameReadySent) {
+        return originalRAF.call(window, function(timestamp) {
+          frameCount++;
+          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
+            gameReadySent = true;
+            sendEvent('game_ready', {
+              frame_count: frameCount,
+              detected_at: Date.now()
+            });
+          }
+          callback(timestamp);
+        });
+      }
+      return originalRAF.call(window, callback);
+    };
+  }
+
+  // --- First User Interaction Detection ---
+
+  function setupFirstInteractionDetection() {
+    var events = ['touchstart', 'mousedown', 'keydown'];
+
+    function onFirstInteraction() {
+      if (firstInteractionSent) return;
+      firstInteractionSent = true;
+      sendEvent('user_interaction_start', null);
+
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], onFirstInteraction, true);
+      }
+    }
+
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], onFirstInteraction, true);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
+  } else {
+    setupFirstInteractionDetection();
+  }
+
+  // --- Auto Error Capture ---
+
+  window.addEventListener('error', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    sendEvent('error', {
+      message: event.message || 'Unknown error',
+      source: event.filename || '',
+      lineno: event.lineno || 0,
+      colno: event.colno || 0,
+      auto_captured: true
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    var reason = event.reason;
+    sendEvent('error', {
+      message: (reason instanceof Error) ? reason.message : String(reason),
+      type: 'unhandled_promise_rejection',
+      auto_captured: true
+    });
+  });
+
+  // --- Public API ---
+
+  window.playablesSDK = {
+    complete: function(score) {
+      sendEvent('game_ended', {
+        score: score,
+        completed: true
+      });
+    },
+
+    error: function(message) {
+      if (errorSent) return;
+      errorSent = true;
+      sendEvent('error', {
+        message: message || 'Unknown error',
+        auto_captured: false
+      });
+    },
+
+    sendEvent: function(eventName, payload) {
+      if (!eventName || typeof eventName !== 'string') return;
+      sendEvent(eventName, payload);
+    }
+  };
+
+  // Kick off rAF detection in case no game code calls rAF immediately
+  if (originalRAF) {
+    originalRAF.call(window, onFrame);
+  }
+})();</script>
+<!-- PLAYABLE_TOUCH_PATCH_V1 --><script>
+(function() {
+  if (window.__playableTouchPatchInstalled) return;
+  window.__playableTouchPatchInstalled = true;
+  var origAdd = EventTarget.prototype.addEventListener;
+  var blockedTypes = { touchstart: 1, touchmove: 1, wheel: 1 };
+  EventTarget.prototype.addEventListener = function(type, listener, options) {
+    if (blockedTypes[type]) {
+      if (options === undefined || options === null) {
+        options = { passive: true };
+      } else if (typeof options === 'boolean') {
+        options = { capture: options, passive: true };
+      } else {
+        options = Object.assign({}, options, { passive: true });
+      }
+    }
+    return origAdd.call(this, type, listener, options);
+  };
+})();
+</script><script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hacyber Grabber Control</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        body { background: #05060a; }
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 5px; }
+        ::-webkit-scrollbar-thumb:hover { background: #06b6d4; }
+        input[type=range] { -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; }
+        input[type=range]::-webkit-slider-runnable-track { height: 6px; background: #1e293b; border-radius: 3px; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; background: #22d3ee; border-radius: 50%; margin-top: -6px; box-shadow: 0 0 10px rgba(34,211,238,0.5), 0 0 20px rgba(34,211,238,0.3); transition: all 0.2s; }
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); box-shadow: 0 0 15px rgba(34,211,238,0.8), 0 0 30px rgba(34,211,238,0.5); }
+        input[type=range]::-moz-range-track { height: 6px; background: #1e293b; border-radius: 3px; }
+        input[type=range]::-moz-range-thumb { width: 18px; height: 18px; background: #22d3ee; border: none; border-radius: 50%; box-shadow: 0 0 10px rgba(34,211,238,0.5); }
+        .glow-cyan { box-shadow: 0 0 20px rgba(34,211,238,0.15), inset 0 0 20px rgba(34,211,238,0.05); }
+        .glow-fuchsia { box-shadow: 0 0 20px rgba(217,70,239,0.15), inset 0 0 20px rgba(217,70,239,0.05); }
+        .glow-emerald { box-shadow: 0 0 30px rgba(16,185,129,0.25); }
+        .glow-rose { box-shadow: 0 0 30px rgba(244,63,94,0.25); }
+        .grid-bg { background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.03) 1px, transparent 0); background-size: 24px 24px; }
+        .card { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+        @keyframes pulse-slow { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+        .animate-pulse-slow { animation: pulse-slow 2s infinite; }
+    </style>
+<style>*, ::before, ::after{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgb(59 130 246 / 0.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgb(59 130 246 / 0.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }/* ! tailwindcss v3.4.17 | MIT License | https://tailwindcss.com */*,::after,::before{box-sizing:border-box;border-width:0;border-style:solid;border-color:#e5e7eb}::after,::before{--tw-content:''}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;tab-size:4;font-family:ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{margin:0;line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,pre,samp{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dd,dl,figure,h1,h2,h3,h4,h5,h6,hr,p,pre{margin:0}fieldset{margin:0;padding:0}legend{padding:0}menu,ol,ul{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}[role=button],button{cursor:pointer}:disabled{cursor:default}audio,canvas,embed,iframe,img,object,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0, 0, 0, 0);white-space:nowrap;border-width:0}.fixed{position:fixed}.absolute{position:absolute}.relative{position:relative}.inset-0{inset:0px}.-left-1\/4{left:-25%}.-right-1\/4{right:-25%}.bottom-0{bottom:0px}.left-0\.5{left:0.125rem}.left-1\/2{left:50%}.left-3{left:0.75rem}.right-0{right:0px}.top-0{top:0px}.top-0\.5{top:0.125rem}.top-1\/2{top:50%}.-bottom-1{bottom:-0.25rem}.-right-1{right:-0.25rem}.-z-10{z-index:-10}.z-10{z-index:10}.mx-auto{margin-left:auto;margin-right:auto}.-mx-1{margin-left:-0.25rem;margin-right:-0.25rem}.-mt-1{margin-top:-0.25rem}.mb-1{margin-bottom:0.25rem}.mb-3{margin-bottom:0.75rem}.mb-4{margin-bottom:1rem}.mb-5{margin-bottom:1.25rem}.mb-6{margin-bottom:1.5rem}.mt-0\.5{margin-top:0.125rem}.mt-1{margin-top:0.25rem}.mt-10{margin-top:2.5rem}.mt-2{margin-top:0.5rem}.mt-5{margin-top:1.25rem}.flex{display:flex}.grid{display:grid}.hidden{display:none}.h-1{height:0.25rem}.h-1\.5{height:0.375rem}.h-10{height:2.5rem}.h-11{height:2.75rem}.h-2{height:0.5rem}.h-24{height:6rem}.h-5{height:1.25rem}.h-6{height:1.5rem}.h-\[340px\]{height:340px}.h-\[500px\]{height:500px}.h-\[600px\]{height:600px}.h-\[800px\]{height:800px}.h-full{height:100%}.h-2\.5{height:0.625rem}.h-3{height:0.75rem}.h-9{height:2.25rem}.min-h-screen{min-height:100vh}.w-1\.5{width:0.375rem}.w-10{width:2.5rem}.w-11{width:2.75rem}.w-2{width:0.5rem}.w-24{width:6rem}.w-5{width:1.25rem}.w-\[500px\]{width:500px}.w-\[600px\]{width:600px}.w-\[800px\]{width:800px}.w-\[87\%\]{width:87%}.w-full{width:100%}.w-2\.5{width:0.625rem}.w-3{width:0.75rem}.w-9{width:2.25rem}.w-\[48px\]{width:48px}.w-\[54px\]{width:54px}.min-w-0{min-width:0px}.max-w-2xl{max-width:42rem}.max-w-7xl{max-width:80rem}.flex-1{flex:1 1 0%}.shrink-0{flex-shrink:0}.-translate-x-1\/2{--tw-translate-x:-50%;transform:translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.-translate-y-1\/2{--tw-translate-y:-50%;transform:translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.translate-x-\[-100\%\]{--tw-translate-x:-100%;transform:translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}@keyframes pulse{50%{opacity:.5}}.animate-pulse{animation:pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite}@keyframes ping{75%, 100%{transform:scale(2);opacity:0}}.animate-ping{animation:ping 1s cubic-bezier(0, 0, 0.2, 1) infinite}.cursor-not-allowed{cursor:not-allowed}.cursor-pointer{cursor:pointer}.grid-cols-1{grid-template-columns:repeat(1, minmax(0, 1fr))}.grid-cols-2{grid-template-columns:repeat(2, minmax(0, 1fr))}.flex-col{flex-direction:column}.items-start{align-items:flex-start}.items-center{align-items:center}.justify-end{justify-content:flex-end}.justify-center{justify-content:center}.justify-between{justify-content:space-between}.gap-2{gap:0.5rem}.gap-2\.5{gap:0.625rem}.gap-3{gap:0.75rem}.gap-4{gap:1rem}.gap-5{gap:1.25rem}.gap-1{gap:0.25rem}.space-y-2\.5 > :not([hidden]) ~ :not([hidden]){--tw-space-y-reverse:0;margin-top:calc(0.625rem * calc(1 - var(--tw-space-y-reverse)));margin-bottom:calc(0.625rem * var(--tw-space-y-reverse))}.space-y-3 > :not([hidden]) ~ :not([hidden]){--tw-space-y-reverse:0;margin-top:calc(0.75rem * calc(1 - var(--tw-space-y-reverse)));margin-bottom:calc(0.75rem * var(--tw-space-y-reverse))}.space-y-4 > :not([hidden]) ~ :not([hidden]){--tw-space-y-reverse:0;margin-top:calc(1rem * calc(1 - var(--tw-space-y-reverse)));margin-bottom:calc(1rem * var(--tw-space-y-reverse))}.overflow-hidden{overflow:hidden}.overflow-y-auto{overflow-y:auto}.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rounded-2xl{border-radius:1rem}.rounded-full{border-radius:9999px}.rounded-lg{border-radius:0.5rem}.rounded-md{border-radius:0.375rem}.rounded-xl{border-radius:0.75rem}.rounded{border-radius:0.25rem}.border{border-width:1px}.border-2{border-width:2px}.border-t{border-top-width:1px}.border-amber-500\/20{border-color:rgb(245 158 11 / 0.2)}.border-cyan-500\/20{border-color:rgb(6 182 212 / 0.2)}.border-emerald-500\/20{border-color:rgb(16 185 129 / 0.2)}.border-emerald-500\/30{border-color:rgb(16 185 129 / 0.3)}.border-fuchsia-500\/20{border-color:rgb(217 70 239 / 0.2)}.border-rose-500\/20{border-color:rgb(244 63 94 / 0.2)}.border-slate-700{--tw-border-opacity:1;border-color:rgb(51 65 85 / var(--tw-border-opacity, 1))}.border-slate-700\/50{border-color:rgb(51 65 85 / 0.5)}.border-slate-800{--tw-border-opacity:1;border-color:rgb(30 41 59 / var(--tw-border-opacity, 1))}.border-slate-800\/50{border-color:rgb(30 41 59 / 0.5)}.border-violet-500\/20{border-color:rgb(139 92 246 / 0.2)}.border-cyan-500{--tw-border-opacity:1;border-color:rgb(6 182 212 / var(--tw-border-opacity, 1))}.border-slate-950{--tw-border-opacity:1;border-color:rgb(2 6 23 / var(--tw-border-opacity, 1))}.bg-\[\#05060a\]{--tw-bg-opacity:1;background-color:rgb(5 6 10 / var(--tw-bg-opacity, 1))}.bg-amber-500\/10{background-color:rgb(245 158 11 / 0.1)}.bg-black\/60{background-color:rgb(0 0 0 / 0.6)}.bg-cyan-400{--tw-bg-opacity:1;background-color:rgb(34 211 238 / var(--tw-bg-opacity, 1))}.bg-cyan-500\/10{background-color:rgb(6 182 212 / 0.1)}.bg-emerald-400{--tw-bg-opacity:1;background-color:rgb(52 211 153 / var(--tw-bg-opacity, 1))}.bg-emerald-500\/10{background-color:rgb(16 185 129 / 0.1)}.bg-emerald-500\/20{background-color:rgb(16 185 129 / 0.2)}.bg-fuchsia-400{--tw-bg-opacity:1;background-color:rgb(232 121 249 / var(--tw-bg-opacity, 1))}.bg-fuchsia-500\/10{background-color:rgb(217 70 239 / 0.1)}.bg-rose-500\/10{background-color:rgb(244 63 94 / 0.1)}.bg-slate-400{--tw-bg-opacity:1;background-color:rgb(148 163 184 / var(--tw-bg-opacity, 1))}.bg-slate-800{--tw-bg-opacity:1;background-color:rgb(30 41 59 / var(--tw-bg-opacity, 1))}.bg-slate-800\/80{background-color:rgb(30 41 59 / 0.8)}.bg-slate-900\/60{background-color:rgb(15 23 42 / 0.6)}.bg-slate-900\/70{background-color:rgb(15 23 42 / 0.7)}.bg-slate-950\/50{background-color:rgb(2 6 23 / 0.5)}.bg-slate-950\/70{background-color:rgb(2 6 23 / 0.7)}.bg-violet-400{--tw-bg-opacity:1;background-color:rgb(167 139 250 / var(--tw-bg-opacity, 1))}.bg-violet-500\/10{background-color:rgb(139 92 246 / 0.1)}.bg-violet-500\/\[0\.03\]{background-color:rgb(139 92 246 / 0.03)}.bg-cyan-500{--tw-bg-opacity:1;background-color:rgb(6 182 212 / var(--tw-bg-opacity, 1))}.bg-emerald-500{--tw-bg-opacity:1;background-color:rgb(16 185 129 / var(--tw-bg-opacity, 1))}.bg-slate-600{--tw-bg-opacity:1;background-color:rgb(71 85 105 / var(--tw-bg-opacity, 1))}.bg-slate-900\/50{background-color:rgb(15 23 42 / 0.5)}.bg-gradient-to-br{background-image:linear-gradient(to bottom right, var(--tw-gradient-stops))}.bg-gradient-to-r{background-image:linear-gradient(to right, var(--tw-gradient-stops))}.from-cyan-400{--tw-gradient-from:#22d3ee var(--tw-gradient-from-position);--tw-gradient-to:rgb(34 211 238 / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from), var(--tw-gradient-to)}.from-emerald-600\/0{--tw-gradient-from:rgb(5 150 105 / 0) var(--tw-gradient-from-position);--tw-gradient-to:rgb(5 150 105 / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from), var(--tw-gradient-to)}.from-violet-500{--tw-gradient-from:#8b5cf6 var(--tw-gradient-from-position);--tw-gradient-to:rgb(139 92 246 / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from), var(--tw-gradient-to)}.via-emerald-500\/10{--tw-gradient-to:rgb(16 185 129 / 0)  var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from), rgb(16 185 129 / 0.1) var(--tw-gradient-via-position), var(--tw-gradient-to)}.via-fuchsia-500{--tw-gradient-to:rgb(217 70 239 / 0)  var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from), #d946ef var(--tw-gradient-via-position), var(--tw-gradient-to)}.to-emerald-600\/0{--tw-gradient-to:rgb(5 150 105 / 0) var(--tw-gradient-to-position)}.to-fuchsia-500{--tw-gradient-to:#d946ef var(--tw-gradient-to-position)}.to-violet-600{--tw-gradient-to:#7c3aed var(--tw-gradient-to-position)}.bg-clip-text{-webkit-background-clip:text;background-clip:text}.p-1\.5{padding:0.375rem}.p-2\.5{padding:0.625rem}.p-3{padding:0.75rem}.p-4{padding:1rem}.p-5{padding:1.25rem}.px-2{padding-left:0.5rem;padding-right:0.5rem}.px-3{padding-left:0.75rem;padding-right:0.75rem}.py-1{padding-top:0.25rem;padding-bottom:0.25rem}.py-1\.5{padding-top:0.375rem;padding-bottom:0.375rem}.py-2\.5{padding-top:0.625rem;padding-bottom:0.625rem}.px-1{padding-left:0.25rem;padding-right:0.25rem}.px-1\.5{padding-left:0.375rem;padding-right:0.375rem}.py-0\.5{padding-top:0.125rem;padding-bottom:0.125rem}.pl-7{padding-left:1.75rem}.pr-3{padding-right:0.75rem}.pt-5{padding-top:1.25rem}.pt-6{padding-top:1.5rem}.text-left{text-align:left}.text-center{text-align:center}.text-right{text-align:right}.font-mono{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}.text-3xl{font-size:1.875rem;line-height:2.25rem}.text-\[10px\]{font-size:10px}.text-\[11px\]{font-size:11px}.text-\[22px\]{font-size:22px}.text-lg{font-size:1.125rem;line-height:1.75rem}.text-sm{font-size:0.875rem;line-height:1.25rem}.text-xl{font-size:1.25rem;line-height:1.75rem}.text-xs{font-size:0.75rem;line-height:1rem}.text-\[9px\]{font-size:9px}.font-black{font-weight:900}.font-bold{font-weight:700}.font-medium{font-weight:500}.font-semibold{font-weight:600}.uppercase{text-transform:uppercase}.leading-none{line-height:1}.leading-relaxed{line-height:1.625}.tracking-tight{letter-spacing:-0.025em}.tracking-wide{letter-spacing:0.025em}.tracking-wider{letter-spacing:0.05em}.tracking-widest{letter-spacing:0.1em}.text-amber-400\/80{color:rgb(251 191 36 / 0.8)}.text-cyan-400{--tw-text-opacity:1;color:rgb(34 211 238 / var(--tw-text-opacity, 1))}.text-emerald-400{--tw-text-opacity:1;color:rgb(52 211 153 / var(--tw-text-opacity, 1))}.text-emerald-500\/70{color:rgb(16 185 129 / 0.7)}.text-fuchsia-400{--tw-text-opacity:1;color:rgb(232 121 249 / var(--tw-text-opacity, 1))}.text-slate-100{--tw-text-opacity:1;color:rgb(241 245 249 / var(--tw-text-opacity, 1))}.text-slate-200{--tw-text-opacity:1;color:rgb(226 232 240 / var(--tw-text-opacity, 1))}.text-slate-300{--tw-text-opacity:1;color:rgb(203 213 225 / var(--tw-text-opacity, 1))}.text-slate-400{--tw-text-opacity:1;color:rgb(148 163 184 / var(--tw-text-opacity, 1))}.text-slate-500{--tw-text-opacity:1;color:rgb(100 116 139 / var(--tw-text-opacity, 1))}.text-slate-600{--tw-text-opacity:1;color:rgb(71 85 105 / var(--tw-text-opacity, 1))}.text-slate-700{--tw-text-opacity:1;color:rgb(51 65 85 / var(--tw-text-opacity, 1))}.text-transparent{color:transparent}.text-violet-400{--tw-text-opacity:1;color:rgb(167 139 250 / var(--tw-text-opacity, 1))}.text-rose-400{--tw-text-opacity:1;color:rgb(251 113 133 / var(--tw-text-opacity, 1))}.opacity-40{opacity:0.4}.opacity-50{opacity:0.5}.opacity-75{opacity:0.75}.shadow-lg{--tw-shadow:0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);--tw-shadow-colored:0 10px 15px -3px var(--tw-shadow-color), 0 4px 6px -4px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow)}.shadow-md{--tw-shadow:0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);--tw-shadow-colored:0 4px 6px -1px var(--tw-shadow-color), 0 2px 4px -2px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow)}.shadow-fuchsia-500\/20{--tw-shadow-color:rgb(217 70 239 / 0.2);--tw-shadow:var(--tw-shadow-colored)}.blur-3xl{--tw-blur:blur(64px);filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.blur-\[100px\]{--tw-blur:blur(100px);filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.blur-\[120px\]{--tw-blur:blur(120px);filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.blur-xl{--tw-blur:blur(24px);filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.transition-all{transition-property:all;transition-timing-function:cubic-bezier(0.4, 0, 0.2, 1);transition-duration:150ms}.transition-colors{transition-property:color, background-color, border-color, fill, stroke, -webkit-text-decoration-color;transition-property:color, background-color, border-color, text-decoration-color, fill, stroke;transition-property:color, background-color, border-color, text-decoration-color, fill, stroke, -webkit-text-decoration-color;transition-timing-function:cubic-bezier(0.4, 0, 0.2, 1);transition-duration:150ms}.transition-transform{transition-property:transform;transition-timing-function:cubic-bezier(0.4, 0, 0.2, 1);transition-duration:150ms}.duration-1000{transition-duration:1000ms}.duration-300{transition-duration:300ms}.selection\:bg-fuchsia-500\/30 *::selection{background-color:rgb(217 70 239 / 0.3)}.selection\:text-fuchsia-200 *::selection{--tw-text-opacity:1;color:rgb(245 208 254 / var(--tw-text-opacity, 1))}.selection\:bg-fuchsia-500\/30::selection{background-color:rgb(217 70 239 / 0.3)}.selection\:text-fuchsia-200::selection{--tw-text-opacity:1;color:rgb(245 208 254 / var(--tw-text-opacity, 1))}.hover\:border-cyan-500\/30:hover{border-color:rgb(6 182 212 / 0.3)}.hover\:border-emerald-400\/50:hover{border-color:rgb(52 211 153 / 0.5)}.hover\:border-fuchsia-500\/30:hover{border-color:rgb(217 70 239 / 0.3)}.hover\:border-slate-700:hover{--tw-border-opacity:1;border-color:rgb(51 65 85 / var(--tw-border-opacity, 1))}.hover\:border-violet-500\/30:hover{border-color:rgb(139 92 246 / 0.3)}.hover\:bg-emerald-500\/15:hover{background-color:rgb(16 185 129 / 0.15)}.hover\:bg-slate-700:hover{--tw-bg-opacity:1;background-color:rgb(51 65 85 / var(--tw-bg-opacity, 1))}.hover\:bg-slate-900\/50:hover{background-color:rgb(15 23 42 / 0.5)}.hover\:text-slate-200:hover{--tw-text-opacity:1;color:rgb(226 232 240 / var(--tw-text-opacity, 1))}.focus\:border-cyan-500\/50:focus{border-color:rgb(6 182 212 / 0.5)}.focus\:outline-none:focus{outline:2px solid transparent;outline-offset:2px}.focus\:ring-1:focus{--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000)}.focus\:ring-cyan-500\/50:focus{--tw-ring-color:rgb(6 182 212 / 0.5)}.group:hover .group-hover\:translate-x-\[100\%\]{--tw-translate-x:100%;transform:translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.group:hover .group-hover\:scale-110{--tw-scale-x:1.1;--tw-scale-y:1.1;transform:translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.group:hover .group-hover\:border-slate-600{--tw-border-opacity:1;border-color:rgb(71 85 105 / var(--tw-border-opacity, 1))}.peer:checked ~ .peer-checked\:border-cyan-500\/50{border-color:rgb(6 182 212 / 0.5)}.peer:checked ~ .peer-checked\:border-fuchsia-500\/50{border-color:rgb(217 70 239 / 0.5)}.peer:checked ~ .peer-checked\:bg-cyan-500\/30{background-color:rgb(6 182 212 / 0.3)}.peer:checked ~ .peer-checked\:bg-fuchsia-500\/30{background-color:rgb(217 70 239 / 0.3)}@media (min-width: 640px){.sm\:flex{display:flex}.sm\:grid-cols-2{grid-template-columns:repeat(2, minmax(0, 1fr))}.sm\:grid-cols-3{grid-template-columns:repeat(3, minmax(0, 1fr))}.sm\:text-2xl{font-size:1.5rem;line-height:2rem}}@media (min-width: 768px){.md\:block{display:block}.md\:grid-cols-3{grid-template-columns:repeat(3, minmax(0, 1fr))}.md\:text-\[28px\]{font-size:28px}}@media (min-width: 1024px){.lg\:mb-8{margin-bottom:2rem}.lg\:gap-4{gap:1rem}.lg\:gap-6{gap:1.5rem}.lg\:p-6{padding:1.5rem}.lg\:text-xl{font-size:1.25rem;line-height:1.75rem}}@media (min-width: 1280px){.xl\:col-span-1{grid-column:span 1 / span 1}.xl\:col-span-2{grid-column:span 2 / span 2}.xl\:grid-cols-3{grid-template-columns:repeat(3, minmax(0, 1fr))}}.peer:checked ~ .peer-checked\:\[\&\>div\]\:translate-x-5>div{--tw-translate-x:1.25rem;transform:translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.peer:checked ~ .peer-checked\:\[\&\>div\]\:bg-cyan-400>div{--tw-bg-opacity:1;background-color:rgb(34 211 238 / var(--tw-bg-opacity, 1))}.peer:checked ~ .peer-checked\:\[\&\>div\]\:bg-fuchsia-400>div{--tw-bg-opacity:1;background-color:rgb(232 121 249 / var(--tw-bg-opacity, 1))}</style></head>
+<body class="min-h-screen text-slate-100 selection:bg-fuchsia-500/30 selection:text-fuchsia-200">
+    <div class="fixed inset-0 -z-10">
+        <div class="absolute inset-0 bg-[#05060a]"></div>
+        <div class="absolute top-0 -left-1/4 w-[600px] h-[600px] bg-cyan-500/10 rounded-full blur-[120px]"></div>
+        <div class="absolute bottom-0 -right-1/4 w-[500px] h-[500px] bg-fuchsia-500/10 rounded-full blur-[120px]"></div>
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-violet-500/[0.03] rounded-full blur-[100px]"></div>
+        <div class="absolute inset-0 grid-bg"></div>
+    </div>
+
+    <div class="relative z-10 max-w-7xl mx-auto p-4 lg:p-6">
+        <!-- Header -->
+        <header class="flex items-center justify-between mb-6 lg:mb-8">
+            <div class="flex items-center gap-3">
+                <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-cyan-400 via-fuchsia-500 to-violet-600 flex items-center justify-center shadow-lg shadow-fuchsia-500/20 relative">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+                    <div class="absolute inset-0 rounded-2xl bg-gradient-to-br from-cyan-400 to-fuchsia-500 blur-xl opacity-50 -z-10"></div>
+                </div>
+                <div>
+                    <h1 class="text-[22px] sm:text-2xl md:text-[28px] font-black tracking-tight leading-none">
+                        Hacyber <span class="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-fuchsia-500">Grabber Control</span>
+                    </h1>
+                    <p class="text-[11px] text-slate-500 mt-0.5 font-medium tracking-wide uppercase">Cross-Device Automation • v2.4.1</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/70 border border-slate-800">
+                    <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse-slow"></div>
+                    <span class="text-xs text-slate-400">API Connected</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-[10px] text-slate-500 uppercase tracking-widest hidden md:block">Status</span>
+                    <span id="system-status" class="px-3 py-1.5 rounded-full bg-slate-800/80 text-slate-300 border border-slate-700/50 text-xs font-semibold tracking-wide">IDLE</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Analytics -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 lg:gap-4 mb-4">
+            <div class="card relative overflow-hidden rounded-2xl bg-slate-900/60 border border-slate-800 p-5 glow-cyan hover:border-cyan-500/30 transition-all duration-300">
+                <div class="absolute top-0 right-0 w-24 h-24 bg-cyan-500/10 rounded-full blur-3xl"></div>
+                <div class="relative">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2"><path d="M16 11V7a4 4 0 0 0-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
+                        </div>
+                        <span class="text-[10px] text-cyan-400 font-mono uppercase tracking-wider">Today</span>
+                    </div>
+                    <p class="text-[11px] text-slate-500 uppercase tracking-widest font-medium mb-1">Orders Grabbed</p>
+                    <p id="stat-orders" class="text-3xl font-black tracking-tight">23</p>
+                    <p class="text-xs text-emerald-400 mt-1 font-medium">+4 in last hour</p>
+                </div>
+            </div>
+
+            <div class="card relative overflow-hidden rounded-2xl bg-slate-900/60 border border-slate-800 p-5 glow-fuchsia hover:border-fuchsia-500/30 transition-all duration-300">
+                <div class="absolute top-0 right-0 w-24 h-24 bg-fuchsia-500/10 rounded-full blur-3xl"></div>
+                <div class="relative">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="p-2.5 rounded-xl bg-fuchsia-500/10 border border-fuchsia-500/20">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d946ef" stroke-width="2"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 0 0 1 0 7H6"></path></svg>
+                        </div>
+                        <span class="text-[10px] text-fuchsia-400 font-mono uppercase tracking-wider">EST</span>
+                    </div>
+                    <p class="text-[11px] text-slate-500 uppercase tracking-widest font-medium mb-1">Earnings</p>
+                    <p id="stat-earnings" class="text-3xl font-black tracking-tight">$347.50</p>
+                    <p class="text-xs text-slate-400 mt-1 font-medium">$15.11 avg / order</p>
+                </div>
+            </div>
+
+            <div class="card relative overflow-hidden rounded-2xl bg-slate-900/60 border border-slate-800 p-5 hover:border-violet-500/30 transition-all duration-300">
+                <div class="absolute top-0 right-0 w-24 h-24 bg-violet-500/10 rounded-full blur-3xl"></div>
+                <div class="relative">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="p-2.5 rounded-xl bg-violet-500/10 border border-violet-500/20">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                        </div>
+                        <span class="text-[10px] text-violet-400 font-mono uppercase tracking-wider">Rate</span>
+                    </div>
+                    <p class="text-[11px] text-slate-500 uppercase tracking-widest font-medium mb-1">Acceptance</p>
+                    <p id="stat-accept" class="text-3xl font-black tracking-tight">87.3<span class="text-xl text-slate-600">%</span></p>
+                    <div class="w-full h-1 bg-slate-800 rounded-full mt-2 overflow-hidden">
+                        <div id="accept-bar" class="h-full w-[87%] bg-gradient-to-r from-violet-500 to-fuchsia-500 rounded-full"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Start/Stop -->
+        <div class="grid grid-cols-2 gap-3 lg:gap-4 mb-6">
+            <button id="btn-start" class="group relative overflow-hidden rounded-2xl bg-emerald-500/10 border-2 border-emerald-500/30 p-5 lg:p-6 hover:bg-emerald-500/15 hover:border-emerald-400/50 transition-all duration-300 glow-emerald">
+                <div class="absolute inset-0 bg-gradient-to-r from-emerald-600/0 via-emerald-500/10 to-emerald-600/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
+                <div class="relative flex items-center justify-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    </div>
+                    <div class="text-left">
+                        <p class="text-lg lg:text-xl font-black tracking-wide text-emerald-400">START</p>
+                        <p class="text-[10px] text-emerald-500/70 uppercase tracking-widest -mt-1">Begin Grabbing</p>
+                    </div>
+                </div>
+            </button>
+
+            <button id="btn-stop" disabled="" class="group relative overflow-hidden rounded-2xl bg-slate-900/60 border-2 border-slate-800 p-5 lg:p-6 opacity-40 cursor-not-allowed transition-all duration-300">
+                <div class="relative flex items-center justify-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"></rect></svg>
+                    </div>
+                    <div class="text-left">
+                        <p class="text-lg lg:text-xl font-black tracking-wide text-slate-500">STOP</p>
+                        <p class="text-[10px] text-slate-600 uppercase tracking-widest -mt-1">Halt All Devices</p>
+                    </div>
+                </div>
+            </button>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 lg:gap-6">
+            <!-- Left Column -->
+            <div class="xl:col-span-1 space-y-4">
+                <!-- Device Status -->
+                <div class="card rounded-2xl bg-slate-900/60 border border-slate-800 p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-sm font-bold uppercase tracking-widest text-slate-200 flex items-center gap-2">
+                            <div class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></div>
+                            Device Status
+                        </h2>
+                        <span class="text-[10px] px-2 py-1 rounded-md bg-slate-800 text-slate-400 font-mono">4 DEVICES</span>
+                    </div>
+                    <div id="device-list" class="space-y-2.5">
+                    <div class="group flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-800 hover:border-slate-700 transition-all">
+                        <div class="relative">
+                            <div class="w-9 h-9 rounded-lg bg-slate-800 flex items-center justify-center border border-slate-700 group-hover:border-slate-600 transition-colors">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-slate-400"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
+                            </div>
+                            <div class="absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-slate-950 bg-emerald-500">
+                                <div class="absolute inset-0 rounded-full bg-emerald-500 animate-ping opacity-75"></div>
+                            </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <p class="text-sm font-semibold text-slate-200 truncate">Pixel 7 Pro</p>
+                                <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 font-mono">SM-A7</span>
+                            </div>
+                            <div class="flex items-center gap-3 mt-0.5">
+                                <span class="text-[11px] text-slate-500">Downtown • 42ms</span>
+                            </div>
+                        <div class="text-right">
+                            <div class="flex items-center gap-1 justify-end">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><rect x="1" y="6" width="18" height="12" rx="2" ry="2"></rect><line x1="23" y1="13" x2="23" y2="11"></line></svg>
+                                <span class="text-[11px] font-mono text-emerald-400">87%</span>
+                            </div>
+                        </div>
+                    </div>
+                
+                    <div class="group flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-800 hover:border-slate-700 transition-all">
+                        <div class="relative">
+                            <div class="w-9 h-9 rounded-lg bg-slate-800 flex items-center justify-center border border-slate-700 group-hover:border-slate-600 transition-colors">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-slate-400"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
+                            </div>
+                            <div class="absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-slate-950 bg-emerald-500">
+                                <div class="absolute inset-0 rounded-full bg-emerald-500 animate-ping opacity-75"></div>
+                            </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <p class="text-sm font-semibold text-slate-200 truncate">Galaxy S22</p>
+                                <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 font-mono">SM-GS22</span>
+                            </div>
+                            <div class="flex items-center gap-3 mt-0.5">
+                                <span class="text-[11px] text-slate-500">Westside • 58ms</span>
+                            </div>
+                        <div class="text-right">
+                            <div class="flex items-center gap-1 justify-end">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><rect x="1" y="6" width="18" height="12" rx="2" ry="2"></rect><line x1="23" y1="13" x2="23" y2="11"></line></svg>
+                                <span class="text-[11px] font-mono text-emerald-400">64%</span>
+                            </div>
+                        </div>
+                    </div>
+                
+                    <div class="group flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-800 hover:border-slate-700 transition-all">
+                        <div class="relative">
+                            <div class="w-9 h-9 rounded-lg bg-slate-800 flex items-center justify-center border border-slate-700 group-hover:border-slate-600 transition-colors">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-slate-400"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
+                            </div>
+                            <div class="absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-slate-950 bg-slate-600">
+                                
+                            </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <p class="text-sm font-semibold text-slate-200 truncate">OnePlus 11</p>
+                                <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 font-mono">OP-11</span>
+                            </div>
+                            <div class="flex items-center gap-3 mt-0.5">
+                                <span class="text-[11px] text-slate-500">East End • offline</span>
+                            </div>
+                        <div class="text-right">
+                            <div class="flex items-center gap-1 justify-end">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><rect x="1" y="6" width="18" height="12" rx="2" ry="2"></rect><line x1="23" y1="13" x2="23" y2="11"></line></svg>
+                                <span class="text-[11px] font-mono text-rose-400">23%</span>
+                            </div>
+                        </div>
+                    </div>
+                
+                    <div class="group flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-800 hover:border-slate-700 transition-all">
+                        <div class="relative">
+                            <div class="w-9 h-9 rounded-lg bg-slate-800 flex items-center justify-center border border-slate-700 group-hover:border-slate-600 transition-colors">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-slate-400"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
+                            </div>
+                            <div class="absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-slate-950 bg-emerald-500">
+                                <div class="absolute inset-0 rounded-full bg-emerald-500 animate-ping opacity-75"></div>
+                            </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <p class="text-sm font-semibold text-slate-200 truncate">Pixel 6a</p>
+                                <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 font-mono">PX-6A</span>
+                            </div>
+                            <div class="flex items-center gap-3 mt-0.5">
+                                <span class="text-[11px] text-slate-500">North • 37ms</span>
+                            </div>
+                        <div class="text-right">
+                            <div class="flex items-center gap-1 justify-end">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><rect x="1" y="6" width="18" height="12" rx="2" ry="2"></rect><line x1="23" y1="13" x2="23" y2="11"></line></svg>
+                                <span class="text-[11px] font-mono text-emerald-400">91%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div></div></div></div></div></div></div></div></div>
+                </div>
+
+                <!-- App Selection -->
+                <div class="card rounded-2xl bg-slate-900/60 border border-slate-800 p-5">
+                    <h2 class="text-sm font-bold uppercase tracking-widest text-slate-200 mb-4 flex items-center gap-2">
+                        <div class="w-1.5 h-1.5 rounded-full bg-fuchsia-400"></div>
+                        App Selection
+                    </h2>
+                    <div id="apps" class="grid grid-cols-1 gap-2.5">
+                    <label class="group relative flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-700 bg-slate-900/50 hover:border-slate-700 cursor-pointer transition-all">
+                        <input type="checkbox" data-app="doordash" class="app-checkbox sr-only" checked="">
+                        <div class="w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="background: #ff300815; border: 1px solid #ff300830">
+                            <div class="w-2.5 h-2.5 rounded-full transition-all" style="background: #ff3008; box-shadow: 0 0 10px #ff300860"></div>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-sm font-medium text-slate-200">DoorDash</p>
+                            <p class="text-[10px] text-slate-500">Active</p>
+                        </div>
+                        <div class="w-5 h-5 rounded-md border-2 bg-cyan-500 border-cyan-500 flex items-center justify-center transition-all">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                    </label>
+                
+                    <label class="group relative flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-700 bg-slate-900/50 hover:border-slate-700 cursor-pointer transition-all">
+                        <input type="checkbox" data-app="ubereats" class="app-checkbox sr-only" checked="">
+                        <div class="w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="background: #06c16715; border: 1px solid #06c16730">
+                            <div class="w-2.5 h-2.5 rounded-full transition-all" style="background: #06c167; box-shadow: 0 0 10px #06c16760"></div>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-sm font-medium text-slate-200">Uber Eats</p>
+                            <p class="text-[10px] text-slate-500">Active</p>
+                        </div>
+                        <div class="w-5 h-5 rounded-md border-2 bg-cyan-500 border-cyan-500 flex items-center justify-center transition-all">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                    </label>
+                
+                    <label class="group relative flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-700 bg-slate-900/50 hover:border-slate-700 cursor-pointer transition-all">
+                        <input type="checkbox" data-app="instacart" class="app-checkbox sr-only" checked="">
+                        <div class="w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="background: #43b02a15; border: 1px solid #43b02a30">
+                            <div class="w-2.5 h-2.5 rounded-full transition-all" style="background: #43b02a; box-shadow: 0 0 10px #43b02a60"></div>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-sm font-medium text-slate-200">Instacart</p>
+                            <p class="text-[10px] text-slate-500">Active</p>
+                        </div>
+                        <div class="w-5 h-5 rounded-md border-2 bg-cyan-500 border-cyan-500 flex items-center justify-center transition-all">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                    </label>
+                
+                    <label class="group relative flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-800 hover:border-slate-700 cursor-pointer transition-all">
+                        <input type="checkbox" data-app="spark" class="app-checkbox sr-only">
+                        <div class="w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="background: #0071ce15; border: 1px solid #0071ce30">
+                            <div class="w-2.5 h-2.5 rounded-full transition-all" style="background: #0071ce; box-shadow: 0 0 10px #0071ce60"></div>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-sm font-medium text-slate-200">Walmart Spark</p>
+                            <p class="text-[10px] text-slate-500">Disabled</p>
+                        </div>
+                        <div class="w-5 h-5 rounded-md border-2 border-slate-700 flex items-center justify-center transition-all">
+                            
+                        </div>
+                    </label>
+                
+                    <label class="group relative flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-800 hover:border-slate-700 cursor-pointer transition-all">
+                        <input type="checkbox" data-app="zifty" class="app-checkbox sr-only">
+                        <div class="w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="background: #7c3aed15; border: 1px solid #7c3aed30">
+                            <div class="w-2.5 h-2.5 rounded-full transition-all" style="background: #7c3aed; box-shadow: 0 0 10px #7c3aed60"></div>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-sm font-medium text-slate-200">Zifty</p>
+                            <p class="text-[10px] text-slate-500">Disabled</p>
+                        </div>
+                        <div class="w-5 h-5 rounded-md border-2 border-slate-700 flex items-center justify-center transition-all">
+                            
+                        </div>
+                    </label>
+                
+                    <label class="group relative flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-700 bg-slate-900/50 hover:border-slate-700 cursor-pointer transition-all">
+                        <input type="checkbox" data-app="amazon" class="app-checkbox sr-only" checked="">
+                        <div class="w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="background: #ff990015; border: 1px solid #ff990030">
+                            <div class="w-2.5 h-2.5 rounded-full transition-all" style="background: #ff9900; box-shadow: 0 0 10px #ff990060"></div>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-sm font-medium text-slate-200">Amazon Flex</p>
+                            <p class="text-[10px] text-slate-500">Active</p>
+                        </div>
+                        <div class="w-5 h-5 rounded-md border-2 bg-cyan-500 border-cyan-500 flex items-center justify-center transition-all">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                    </label>
+                </div>
+                </div>
+            </div>
+
+            <!-- Right Column -->
+            <div class="xl:col-span-2 space-y-4">
+                <!-- Filters -->
+                <div class="card rounded-2xl bg-slate-900/60 border border-slate-800 p-5">
+                    <h2 class="text-sm font-bold uppercase tracking-widest text-slate-200 mb-5 flex items-center gap-2">
+                        <div class="w-1.5 h-1.5 rounded-full bg-violet-400"></div>
+                        Smart Filters
+                    </h2>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                        <div class="space-y-3">
+                            <div class="flex items-center justify-between">
+                                <label class="text-xs text-slate-400 uppercase tracking-wide font-medium">Min Payout</label>
+                                <span id="payout-value" class="text-sm font-mono font-bold text-cyan-400">$12</span>
+                            </div>
+                            <input type="range" id="payout-slider" min="5" max="30" value="12" class="w-full">
+                            <div class="flex justify-between text-[10px] text-slate-600 font-mono">
+                                <span>$5</span><span>$30</span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-3">
+                            <div class="flex items-center justify-between">
+                                <label class="text-xs text-slate-400 uppercase tracking-wide font-medium">Min Tip</label>
+                            </div>
+                            <div class="relative">
+                                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">$</span>
+                                <input type="number" id="tip-input" value="3.00" step="0.5" min="0" class="w-full bg-slate-950/70 border border-slate-800 rounded-xl pl-7 pr-3 py-2.5 text-sm font-mono focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/50 transition-all">
+                            </div>
+                        </div>
+
+                        <div class="space-y-3">
+                            <div class="flex items-center justify-between">
+                                <label class="text-xs text-slate-400 uppercase tracking-wide font-medium">Max Distance</label>
+                                <span id="distance-value" class="text-sm font-mono font-bold text-fuchsia-400">8 mi</span>
+                            </div>
+                            <input type="range" id="distance-slider" min="1" max="20" value="8" class="w-full">
+                            <div class="flex justify-between text-[10px] text-slate-600 font-mono">
+                                <span>1mi</span><span>20mi</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-5 pt-5 border-t border-slate-800/50">
+                        <label class="group flex items-center justify-between p-3 rounded-xl bg-slate-950/50 border border-slate-800 hover:border-slate-700 cursor-pointer transition-all">
+                            <div class="flex items-center gap-3">
+                                <div class="p-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                                </div>
+                                <span class="text-sm text-slate-300 font-medium">No Grocery</span>
+                            </div>
+                            <input type="checkbox" id="toggle-grocery" class="sr-only peer" checked="">
+                            <div class="relative w-11 h-6 bg-slate-800 rounded-full peer-checked:bg-cyan-500/30 transition-all duration-300 peer-checked:[&amp;&gt;div]:translate-x-5 peer-checked:[&amp;&gt;div]:bg-cyan-400 border border-slate-700 peer-checked:border-cyan-500/50">
+                                <div class="absolute top-0.5 left-0.5 w-5 h-5 bg-slate-400 rounded-full transition-all shadow-md"></div>
+                            </div>
+                        </label>
+
+                        <label class="group flex items-center justify-between p-3 rounded-xl bg-slate-950/50 border border-slate-800 hover:border-slate-700 cursor-pointer transition-all">
+                            <div class="flex items-center gap-3">
+                                <div class="p-1.5 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" stroke-width="2"><path d="M12 2a10 10 0 0 0-9.95 9h11.64L9.74 7.71a1 1 0 0 1 1.41-1.41l4.05 4.06a1 1 0 0 1 0 1.41l-4.06 4.05a1 1 0 0 1-1.41-1.41L13.59 11H2.05A10 10 0 1 0 12 2z"></path></svg>
+                                </div>
+                                <span class="text-sm text-slate-300 font-medium">No Alcohol</span>
+                            </div>
+                            <input type="checkbox" id="toggle-alcohol" class="sr-only peer" checked="">
+                            <div class="relative w-11 h-6 bg-slate-800 rounded-full peer-checked:bg-fuchsia-500/30 transition-all duration-300 peer-checked:[&amp;&gt;div]:translate-x-5 peer-checked:[&amp;&gt;div]:bg-fuchsia-400 border border-slate-700 peer-checked:border-fuchsia-500/50">
+                                <div class="absolute top-0.5 left-0.5 w-5 h-5 bg-slate-400 rounded-full transition-all shadow-md"></div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Live Activity Log -->
+                <div class="card rounded-2xl bg-slate-900/60 border border-slate-800 p-5 flex flex-col h-[340px]">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="text-sm font-bold uppercase tracking-widest text-slate-200 flex items-center gap-2">
+                            <div class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
+                            Live Activity
+                        </h2>
+                        <div class="flex items-center gap-2">
+                            <button id="clear-log" class="text-[10px] px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition-colors">CLEAR</button>
+                            <span class="text-[10px] px-2 py-1 rounded-md bg-emerald-500/10 text-emerald-400 font-mono border border-emerald-500/20">LIVE</span>
+                        </div>
+                    </div>
+                    <div id="log" class="flex-1 overflow-y-auto bg-black/60 rounded-xl p-3 border border-slate-800/50 mono text-[11px] leading-relaxed"><div class="flex gap-2.5 py-1 hover:bg-slate-900/50 px-1 -mx-1 rounded transition-colors">
+                    <span class="text-[10px] text-slate-600 font-mono w-[54px] shrink-0">05:01:56</span>
+                    <span class="text-[10px] font-mono w-[48px] shrink-0 text-emerald-400">[BOOT]</span>
+                    <span class="text-[10px] text-emerald-400 w-3 shrink-0">✓</span>
+                    <span class="text-slate-300 flex-1">Hacyber Grabber v2.4.1 initialized</span>
+                </div><div class="flex gap-2.5 py-1 hover:bg-slate-900/50 px-1 -mx-1 rounded transition-colors">
+                    <span class="text-[10px] text-slate-600 font-mono w-[54px] shrink-0">05:01:56</span>
+                    <span class="text-[10px] font-mono w-[48px] shrink-0 text-slate-500">[DEV]</span>
+                    <span class="text-[10px] text-slate-500 w-3 shrink-0">•</span>
+                    <span class="text-slate-300 flex-1">4 Android devices detected</span>
+                </div><div class="flex gap-2.5 py-1 hover:bg-slate-900/50 px-1 -mx-1 rounded transition-colors">
+                    <span class="text-[10px] text-slate-600 font-mono w-[54px] shrink-0">05:01:56</span>
+                    <span class="text-[10px] font-mono w-[48px] shrink-0 text-emerald-400">[API]</span>
+                    <span class="text-[10px] text-emerald-400 w-3 shrink-0">✓</span>
+                    <span class="text-slate-300 flex-1">All platform APIs authenticated</span>
+                </div><div class="flex gap-2.5 py-1 hover:bg-slate-900/50 px-1 -mx-1 rounded transition-colors">
+                    <span class="text-[10px] text-slate-600 font-mono w-[54px] shrink-0">05:01:56</span>
+                    <span class="text-[10px] font-mono w-[48px] shrink-0 text-slate-500">[SYS]</span>
+                    <span class="text-[10px] text-slate-500 w-3 shrink-0">•</span>
+                    <span class="text-slate-300 flex-1">Ready — configure filters and press START</span>
+                </div></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="mt-10 pt-6 border-t border-slate-800/50">
+            <p class="text-center text-[11px] text-slate-600 leading-relaxed max-w-2xl mx-auto">
+                <span class="text-amber-400/80 font-medium">Disclaimer:</span> Hacyber Grabber is for educational and testing purposes only. Automated order grabbing may violate platform Terms of Service. Use in accordance with local laws and platform policies. Developers assume no liability. <span class="text-slate-500">Use at your own risk.</span>
+            </p>
+            <p class="text-center text-[10px] text-slate-700 mt-2 font-mono">© 2025 Hacyber Labs • Not affiliated with any delivery platform</p>
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Elements
+            const $ = id => document.getElementById(id);
+            const systemStatus = $('system-status');
+            const btnStart = $('btn-start');
+            const btnStop = $('btn-stop');
+            const statOrders = $('stat-orders');
+            const statEarnings = $('stat-earnings');
+            const statAccept = $('stat-accept');
+            const acceptBar = $('accept-bar');
+            const payoutSlider = $('payout-slider');
+            const payoutValue = $('payout-value');
+            const distanceSlider = $('distance-slider');
+            const distanceValue = $('distance-value');
+            const tipInput = $('tip-input');
+            const logEl = $('log');
+            const deviceList = $('device-list');
+            const appsContainer = $('apps');
+            const clearLogBtn = $('clear-log');
+
+            // State
+            let running = false;
+            let simTimer = null;
+            let ordersToday = 23;
+            let earnings = 347.50;
+            let acceptance = 87.3;
+            let totalEvaluated = 184;
+
+            const devices = [
+                { id: 1, name: 'Pixel 7 Pro', model: 'SM-A7', battery: 87, status: 'online', ping: 42, location: 'Downtown' },
+                { id: 2, name: 'Galaxy S22', model: 'SM-GS22', battery: 64, status: 'online', ping: 58, location: 'Westside' },
+                { id: 3, name: 'OnePlus 11', model: 'OP-11', battery: 23, status: 'offline', ping: 0, location: 'East End' },
+                { id: 4, name: 'Pixel 6a', model: 'PX-6A', battery: 91, status: 'online', ping: 37, location: 'North' },
+            ];
+
+            const apps = [
+                { id: 'doordash', name: 'DoorDash', color: '#ff3008', checked: true, icon: 'M12 2L2 7l10 5 10-5-10-5z' },
+                { id: 'ubereats', name: 'Uber Eats', color: '#06c167', checked: true, icon: 'M3 12h18M3 6h18M3 18h18' },
+                { id: 'instacart', name: 'Instacart', color: '#43b02a', checked: true, icon: 'M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4' },
+                { id: 'spark', name: 'Walmart Spark', color: '#0071ce', checked: false, icon: 'M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z' },
+                { id: 'zifty', name: 'Zifty', color: '#7c3aed', checked: false, icon: 'M13 2L3 14h9l-1 8 10-12h-9l1-8z' },
+                { id: 'amazon', name: 'Amazon Flex', color: '#ff9900', checked: true, icon: 'M20 7H4m16 0-1 8H5L4 7m16 0V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v2' },
+            ];
+
+            // Render devices
+            function renderDevices() {
+                deviceList.innerHTML = devices.map(d => `
+                    <div class="group flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-800 hover:border-slate-700 transition-all">
+                        <div class="relative">
+                            <div class="w-9 h-9 rounded-lg bg-slate-800 flex items-center justify-center border border-slate-700 group-hover:border-slate-600 transition-colors">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-slate-400"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                            </div>
+                            <div class="absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-slate-950 ${d.status === 'online' ? 'bg-emerald-500' : 'bg-slate-600'}">
+                                ${d.status === 'online' ? '<div class="absolute inset-0 rounded-full bg-emerald-500 animate-ping opacity-75"></div>' : ''}
+                            </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <p class="text-sm font-semibold text-slate-200 truncate">${d.name}</p>
+                                <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 font-mono">${d.model}</span>
+                            </div>
+                            <div class="flex items-center gap-3 mt-0.5">
+                                <span class="text-[11px] text-slate-500">${d.location} • ${d.status === 'online' ? d.ping + 'ms' : 'offline'}</span>
+                            </div>
+                        <div class="text-right">
+                            <div class="flex items-center gap-1 justify-end">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="${d.battery > 30 ? '#22c55e' : '#ef4444'}" stroke-width="2"><rect x="1" y="6" width="18" height="12" rx="2" ry="2"/><line x1="23" y1="13" x2="23" y2="11"/></svg>
+                                <span class="text-[11px] font-mono ${d.battery > 30 ? 'text-emerald-400' : 'text-rose-400'}">${d.battery}%</span>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // Render apps
+            function renderApps() {
+                appsContainer.innerHTML = apps.map(app => `
+                    <label class="group relative flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border ${app.checked ? 'border-slate-700 bg-slate-900/50' : 'border-slate-800'} hover:border-slate-700 cursor-pointer transition-all">
+                        <input type="checkbox" data-app="${app.id}" class="app-checkbox sr-only" ${app.checked ? 'checked' : ''}>
+                        <div class="w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="background: ${app.color}15; border: 1px solid ${app.color}30">
+                            <div class="w-2.5 h-2.5 rounded-full transition-all" style="background: ${app.color}; box-shadow: 0 0 10px ${app.color}60"></div>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-sm font-medium text-slate-200">${app.name}</p>
+                            <p class="text-[10px] text-slate-500">${app.checked ? 'Active' : 'Disabled'}</p>
+                        </div>
+                        <div class="w-5 h-5 rounded-md border-2 ${app.checked ? 'bg-cyan-500 border-cyan-500' : 'border-slate-700'} flex items-center justify-center transition-all">
+                            ${app.checked ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+                        </div>
+                    </label>
+                `).join('');
+
+                document.querySelectorAll('.app-checkbox').forEach(cb => {
+                    cb.addEventListener('change', (e) => {
+                        const app = apps.find(a => a.id === e.target.dataset.app);
+                        app.checked = e.target.checked;
+                        renderApps();
+                        addLog('CONFIG', `${app.name} ${app.checked ? 'enabled' : 'disabled'}`, 'info');
+                    });
+                });
+            }
+
+            // Log
+            function addLog(source, message, type = 'info') {
+                const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+                const colors = {
+                    info: 'text-slate-500',
+                    success: 'text-emerald-400',
+                    warn: 'text-amber-400',
+                    error: 'text-rose-400',
+                    grab: 'text-fuchsia-400',
+                    scan: 'text-cyan-400'
+                };
+                const icons = {
+                    info: '•',
+                    success: '✓',
+                    warn: '⚠',
+                    error: '✕',
+                    grab: '⚡',
+                    scan: '○'
+                };
+                const el = document.createElement('div');
+                el.className = 'flex gap-2.5 py-1 hover:bg-slate-900/50 px-1 -mx-1 rounded transition-colors';
+                el.innerHTML = `
+                    <span class="text-[10px] text-slate-600 font-mono w-[54px] shrink-0">${time}</span>
+                    <span class="text-[10px] font-mono w-[48px] shrink-0 ${colors[type] || 'text-slate-500'}">[${source}]</span>
+                    <span class="text-[10px] ${colors[type]} w-3 shrink-0">${icons[type]}</span>
+                    <span class="text-slate-300 flex-1">${message}</span>
+                `;
+                logEl.appendChild(el);
+                logEl.scrollTop = logEl.scrollHeight;
+                while (logEl.children.length > 200) logEl.removeChild(logEl.firstChild);
+            }
+
+            // Sliders
+            payoutSlider.addEventListener('input', () => payoutValue.textContent = `$${payoutSlider.value}`);
+            distanceSlider.addEventListener('input', () => distanceValue.textContent = `${distanceSlider.value} mi`);
+
+            // Start/Stop
+            function updateUI() {
+                if (running) {
+                    systemStatus.textContent = 'RUNNING';
+                    systemStatus.className = 'px-3 py-1.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-semibold tracking-wide animate-pulse-slow';
+                    btnStart.disabled = true;
+                    btnStart.classList.add('opacity-40', 'cursor-not-allowed');
+                    btnStart.classList.remove('glow-emerald', 'hover:bg-emerald-500/15', 'hover:border-emerald-400/50');
+                    btnStop.disabled = false;
+                    btnStop.classList.remove('opacity-40', 'cursor-not-allowed', 'bg-slate-900/60', 'border-slate-800');
+                    btnStop.classList.add('bg-rose-500/10', 'border-rose-500/30', 'hover:bg-rose-500/15', 'hover:border-rose-400/50', 'glow-rose');
+                    btnStop.querySelector('p').classList.remove('text-slate-500');
+                    btnStop.querySelector('p').classList.add('text-rose-400');
+                    btnStop.querySelector('svg').setAttribute('stroke', '#f43f5e');
+                } else {
+                    systemStatus.textContent = 'IDLE';
+                    systemStatus.className = 'px-3 py-1.5 rounded-full bg-slate-800/80 text-slate-300 border border-slate-700/50 text-xs font-semibold tracking-wide';
+                    btnStart.disabled = false;
+                    btnStart.classList.remove('opacity-40', 'cursor-not-allowed');
+                    btnStart.classList.add('glow-emerald', 'hover:bg-emerald-500/15', 'hover:border-emerald-400/50');
+                    btnStop.disabled = true;
+                    btnStop.classList.add('opacity-40', 'cursor-not-allowed', 'bg-slate-900/60', 'border-slate-800');
+                    btnStop.classList.remove('bg-rose-500/10', 'border-rose-500/30', 'hover:bg-rose-500/15', 'hover:border-rose-400/50', 'glow-rose');
+                    btnStop.querySelector('p').classList.add('text-slate-500');
+                    btnStop.querySelector('p').classList.remove('text-rose-400');
+                    btnStop.querySelector('svg').setAttribute('stroke', '#64748b');
+                }
+            }
+
+            function tick() {
+                if (!running) return;
+                
+                const activeApps = apps.filter(a => a.checked);
+                if (activeApps.length === 0) return;
+                
+                const onlineDevices = devices.filter(d => d.status === 'online');
+                const device = onlineDevices[Math.floor(Math.random() * onlineDevices.length)];
+                const app = activeApps[Math.floor(Math.random() * activeApps.length)];
+                const appCode = app.name.split(' ')[0].toUpperCase().substring(0,4);
+
+                const r = Math.random();
+                totalEvaluated++;
+
+                if (r < 0.65) {
+                    // Scanning
+                    addLog(appCode, `${device.name}: scanning offers...`, 'scan');
+                } else if (r < 0.88) {
+                    // Evaluating
+                    const payout = (parseFloat(payoutSlider.value) + Math.random() * 12).toFixed(2);
+                    const tip = (parseFloat(tipInput.value) + Math.random() * 4).toFixed(2);
+                    const dist = (Math.random() * parseFloat(distanceSlider.value)).toFixed(1);
+                    const meetsCriteria = parseFloat(payout) >= parseFloat(payoutSlider.value) && parseFloat(tip) >= parseFloat(tipInput.value);
+                    
+                    if (meetsCriteria && Math.random() > 0.3) {
+                        addLog(appCode, `Evaluating $${payout} • ${dist}mi • tip $${tip} → meets filters`, 'info');
+                    } else {
+                        const reason = parseFloat(payout) < parseFloat(payoutSlider.value) ? 'low payout' : parseFloat(tip) < parseFloat(tipInput.value) ? 'low tip' : 'distance';
+                        addLog(appCode, `Skipped $${payout} • ${dist}mi (${reason})`, 'warn');
+                        acceptance = Math.max(70, acceptance - 0.05);
+                    }
+                } else {
+                    // Grab!
+                    const payout = (parseFloat(payoutSlider.value) + 3 + Math.random() * 10).toFixed(2);
+                    const dist = (1 + Math.random() * 5).toFixed(1);
+                    ordersToday++;
+                    earnings += parseFloat(payout);
+                    acceptance = Math.min(95, acceptance + 0.15);
+                    
+                    statOrders.textContent = ordersToday.toString();
+                    statEarnings.textContent = `$${earnings.toFixed(2)}`;
+                    statAccept.innerHTML = `${acceptance.toFixed(1)}<span class="text-xl text-slate-600">%</span>`;
+                    acceptBar.style.width = `${acceptance}%`;
+                    
+                    addLog(appCode, `ORDER GRABBED! $${payout} • ${dist}mi • ${device.name}`, 'grab');
+                    addLog('SYS', `Auto-accepted in 0.${Math.floor(200 + Math.random()*600)}s`, 'success');
+                    
+                    // Device activity
+                    device.battery = Math.max(5, device.battery - Math.floor(Math.random() * 2));
+                    device.ping = 30 + Math.floor(Math.random() * 40);
+                    renderDevices();
+                }
+
+                // Random device ping updates
+                if (Math.random() < 0.3) {
+                    devices.forEach(d => {
+                        if (d.status === 'online' && Math.random() < 0.5) {
+                            d.ping = 25 + Math.floor(Math.random() * 50);
+                        }
+                    });
+                    renderDevices();
+                }
+            }
+
+            btnStart.addEventListener('click', () => {
+                if (running) return;
+                running = true;
+                updateUI();
+                addLog('SYSTEM', 'Grabber engine started — monitoring ' + apps.filter(a=>a.checked).length + ' apps', 'success');
+                addLog('SYSTEM', `Filters: ≥$${payoutSlider.value}, tip ≥$${tipInput.value}, ≤${distanceSlider.value}mi`, 'info');
+                simTimer = setInterval(tick, 1400 + Math.random() * 800);
+                tick();
+            });
+
+            btnStop.addEventListener('click', () => {
+                if (!running) return;
+                running = false;
+                clearInterval(simTimer);
+                updateUI();
+                addLog('SYSTEM', 'Grabber stopped — all devices idle', 'warn');
+            });
+
+            clearLogBtn.addEventListener('click', () => {
+                logEl.innerHTML = '';
+                addLog('SYSTEM', 'Activity log cleared', 'info');
+            });
+
+            // Init
+            renderDevices();
+            renderApps();
+            updateUI();
+            
+            // Initial logs
+            addLog('BOOT', 'Hacyber Grabber v2.4.1 initialized', 'success');
+            addLog('DEV', '4 Android devices detected', 'info');
+            addLog('API', 'All platform APIs authenticated', 'success');
+            addLog('SYS', 'Ready — configure filters and press START', 'info');
+
+            // Simulate device going offline/online
+            setInterval(() => {
+                if (Math.random() < 0.08) {
+                    const d = devices[Math.floor(Math.random() * devices.length)];
+                    if (d.status === 'online' && Math.random() < 0.3) {
+                        d.status = 'offline';
+                        addLog('DEV', `${d.name} disconnected`, 'warn');
+                    } else if (d.status === 'offline') {
+                        d.status = 'online';
+                        d.ping = 40 + Math.floor(Math.random() * 30);
+                        addLog('DEV', `${d.name} reconnected`, 'success');
+                    }
+                    renderDevices();
+                }
+            }, 8000);
+        });
+    </script>
+
+</body></html>
